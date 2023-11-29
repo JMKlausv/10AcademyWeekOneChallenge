@@ -21,4 +21,4 @@ if __name__ == "__make_analysis_on_slack__":
  # Using the configuration from config.py
     data_path = cfg.path
   
-make_analysis_on_slack(data_path)
+    make_analysis_on_slack(data_path)
