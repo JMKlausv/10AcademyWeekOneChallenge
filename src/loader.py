@@ -179,35 +179,3 @@ class SlackDataLoader:
         return userNamesById, userIdsByName        
 
 
-def main(data_path):
-    print("in main")
-    # data_path = "C:/Users/hp/Documents/projects/10Academy/10AcademyWeekOneChallenge/data/anonymized_new/anonymized"
-    loader = SlackDataLoader(data_path)
-    df = loader.slack_parser()
-    
-    top_10_reply_count = df.groupby('user')['reply_count'].sum().nlargest(10)
-    bottom_10_reply_count = df.groupby('user')['reply_count'].sum().nsmallest(10)
-    top_10_mention_count = df.groupby('user')['mention_count'].sum().nlargest(10)
-    bottom_10_mention_count = df.groupby('user')['mention_count'].sum().nsmallest(10)
-    top_10_message_count = df['user'].value_counts().nlargest(10)
-    bottom_10_message_count = df['user'].value_counts().nsmallest(10)
-    top_10_reaction_count = df.groupby('user')['reaction_count'].sum().nlargest(10)
-    bottom_10_reaction_count = df.groupby('user')['reaction_count'].sum().nsmallest(10)
-
-
-
-
-    print(top_10_reply_count.head())
-
-if __name__ == "__main__":
- # Using the configuration from config.py
-    data_path = cfg.path
-
-    # # Overriding with command-line argument if provided
-    # parser = argparse.ArgumentParser(description='Export Slack history')
-    # parser.add_argument('--zip', help="Name of a zip file to import")
-    # args = parser.parse_args()
-    
-    # if args.zip:
-    #     data_path = args.zip
-    main(data_path)
