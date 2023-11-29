@@ -1,12 +1,19 @@
+import glob
 import json
 import argparse
 import os
+import re
 import io
 import shutil
 import copy
 from datetime import datetime
 from pick import pick
 from time import sleep
+import pandas as pd
+import json
+import glob
+from config import cfg 
+
 
 
 
@@ -34,7 +41,105 @@ class SlackDataLoader:
         '''
         self.path = path
         self.channels = self.get_channels()
-        self.users = self.get_ussers()
+        self.users = self.get_users()
+    
+    # combine all json file in all-weeks8-9
+    def slack_parser(self):
+        """ parse slack data to extract useful informations from the json file
+            step of execution
+            1. Import the required modules
+            2. read all json file from the provided path
+            3. combine all json files in the provided path
+            4. extract all required informations from the slack data
+            5. convert to dataframe and merge all
+            6. reset the index and return dataframe
+        """
+
+        # specify path to get json files
+        combined = []
+        path_channel = self.path
+        # print("---------",path_channel)
+        
+        for json_file in glob.glob(os.path.join(path_channel, 'all-week1','*.json'),recursive=True):
+            with open(json_file, 'r', encoding="utf8") as slack_data:
+                combined.append(json.load(slack_data))
+                # json_content = json.load(slack_data)
+                # combined.extend(json_content)
+
+        # loop through all json files and extract required informations
+        dflist = []
+        for slack_data in combined:
+
+            msg_type, msg_content, sender_id, time_msg, msg_dist, time_thread_st, reply_users, \
+            reply_count, reply_users_count, tm_thread_end = [],[],[],[],[],[],[],[],[],[]
+
+            for row in slack_data:
+                if 'bot_id' in row.keys():
+                    continue
+                else:
+                    msg_type.append(row['type'])
+                    msg_content.append(row['text'])
+                    if 'user_profile' in row.keys(): sender_id.append(row['user_profile']['real_name'])
+                    else: sender_id.append('Not provided')
+                    time_msg.append(row['ts'])
+                    # if 'blocks' in row.keys() and len(row['blocks'][0]['elements'][0]['elements']) != 0 :
+                    #     msg_dist.append(row['blocks'][0]['elements'][0]['elements'][0]['type'])
+                        
+                    # else: msg_dist.append('reshared')
+                    if 'thread_ts' in row.keys():
+                        time_thread_st.append(row['thread_ts'])
+                    else:
+                        time_thread_st.append(0)
+                    if 'reply_users' in row.keys(): reply_users.append(",".join(row['reply_users'])) 
+                    else:    reply_users.append(0)
+                    if 'reply_count' in row.keys():
+                        reply_count.append(row['reply_count'])
+                        reply_users_count.append(row['reply_users_count'])
+                        tm_thread_end.append(row['latest_reply'])
+                    else:
+                        reply_count.append(0)
+                        reply_users_count.append(0)
+                        tm_thread_end.append(0)
+                        
+            data = zip(msg_type, msg_content, sender_id, time_msg, msg_dist, time_thread_st,
+            reply_count, reply_users_count, reply_users, tm_thread_end)
+            columns = ['msg_type', 'msg_content', 'sender_name', 'msg_sent_time', 'msg_dist_type',
+            'time_thread_start', 'reply_count', 'reply_users_count', 'reply_users', 'tm_thread_end']
+
+            df = pd.DataFrame(data=data, columns=columns)
+            df = df[df['sender_name'] != 'Not provided']
+            dflist.append(df)
+        
+        print("---------",dflist)
+
+        dfall = pd.concat(dflist, ignore_index=True)
+        dfall['channel'] = path_channel.split('/')[-1].split('.')[0]        
+        dfall = dfall.reset_index(drop=True)
+        
+        return dfall
+    def convert_2_timestamp(self,column, data):
+        """convert from unix time to readable timestamp
+            args: column: columns that needs to be converted to timestamp
+                    data: data that has the specified column
+        """
+        if column in data.columns.values:
+            timestamp_ = []
+            for time_unix in data[column]:
+                if time_unix == 0:
+                    timestamp_.append(0)
+                else:
+                    a = datetime.fromtimestamp(float(time_unix))
+                    timestamp_.append(a.strftime('%Y-%m-%d %H:%M:%S'))
+            return timestamp_
+        else: 
+            print(f"{column} not in data")
+
+    def get_tagged_users(self,df):
+        """get all @ in the messages"""
+
+        return df['msg_content'].map(lambda x: re.findall(r'@U\w+', x))
+
+
     
 
     def get_users(self):
@@ -74,11 +179,35 @@ class SlackDataLoader:
         return userNamesById, userIdsByName        
 
 
+def main(data_path):
+    print("in main")
+    # data_path = "C:/Users/hp/Documents/projects/10Academy/10AcademyWeekOneChallenge/data/anonymized_new/anonymized"
+    loader = SlackDataLoader(data_path)
+    df = loader.slack_parser()
+    
+    top_10_reply_count = df.groupby('user')['reply_count'].sum().nlargest(10)
+    bottom_10_reply_count = df.groupby('user')['reply_count'].sum().nsmallest(10)
+    top_10_mention_count = df.groupby('user')['mention_count'].sum().nlargest(10)
+    bottom_10_mention_count = df.groupby('user')['mention_count'].sum().nsmallest(10)
+    top_10_message_count = df['user'].value_counts().nlargest(10)
+    bottom_10_message_count = df['user'].value_counts().nsmallest(10)
+    top_10_reaction_count = df.groupby('user')['reaction_count'].sum().nlargest(10)
+    bottom_10_reaction_count = df.groupby('user')['reaction_count'].sum().nsmallest(10)
 
+
+
+
+    print(top_10_reply_count.head())
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Export Slack history')
+ # Using the configuration from config.py
+    data_path = cfg.path
 
+    # # Overriding with command-line argument if provided
+    # parser = argparse.ArgumentParser(description='Export Slack history')
+    # parser.add_argument('--zip', help="Name of a zip file to import")
+    # args = parser.parse_args()
     
-    parser.add_argument('--zip', help="Name of a zip file to import")
-    args = parser.parse_args()
+    # if args.zip:
+    #     data_path = args.zip
+    main(data_path)
