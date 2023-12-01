@@ -71,7 +71,7 @@ class SlackDataLoader:
         for slack_data in combined:
 
             msg_type, msg_content, sender_id, time_msg, msg_dist, time_thread_st, reply_users, \
-            reply_count, reply_users_count, tm_thread_end = [],[],[],[],[],[],[],[],[],[]
+            reply_count, reply_users_count, tm_thread_end, reactions_count,reactions_users = [],[],[],[],[],[],[],[],[],[],[],[]
 
             for row in slack_data:
                 if 'bot_id' in row.keys():
@@ -82,10 +82,10 @@ class SlackDataLoader:
                     if 'user_profile' in row.keys(): sender_id.append(row['user_profile']['real_name'])
                     else: sender_id.append('Not provided')
                     time_msg.append(row['ts'])
-                    # if 'blocks' in row.keys() and len(row['blocks'][0]['elements'][0]['elements']) != 0 :
-                    #     msg_dist.append(row['blocks'][0]['elements'][0]['elements'][0]['type'])
+                    if 'blocks' in row and row['blocks'] and 'elements' in row['blocks'][0] and row['blocks'][0]['elements']:
+                        msg_dist.append(row['blocks'][0]['elements'][0]['elements'][0]['type'])
                         
-                    # else: msg_dist.append('reshared')
+                    else: msg_dist.append('reshared')
                     if 'thread_ts' in row.keys():
                         time_thread_st.append(row['thread_ts'])
                     else:
@@ -100,23 +100,43 @@ class SlackDataLoader:
                         reply_count.append(0)
                         reply_users_count.append(0)
                         tm_thread_end.append(0)
-                        
+                    if 'reactions' in row.keys():
+                        reactions = row['reactions']
+                        reactions_count_per_message = len(reactions)
+                        users_list_per_reaction = ",".join([user for reaction in reactions for user in reaction['users']])
+                        reactions_count.append(reactions_count_per_message)
+                        reactions_users.append(users_list_per_reaction)
+                    else:
+                        reactions_count.append(0)
+                        reactions_users.append("")
+                    
+
             data = zip(msg_type, msg_content, sender_id, time_msg, msg_dist, time_thread_st,
-            reply_count, reply_users_count, reply_users, tm_thread_end)
+                       reply_count, reply_users_count, reply_users, tm_thread_end, reactions_count, reactions_users)
             columns = ['msg_type', 'msg_content', 'sender_name', 'msg_sent_time', 'msg_dist_type',
-            'time_thread_start', 'reply_count', 'reply_users_count', 'reply_users', 'tm_thread_end']
+                       'time_thread_start', 'reply_count', 'reply_users_count', 'reply_users', 'tm_thread_end',
+                       'reactions_count', 'reactions_users']
+            # print("--------------",reply_count)
+            # print("00000000000000",reply_users)
+            # print("77777777",reply_users_count)
+
 
             df = pd.DataFrame(data=data, columns=columns)
             df = df[df['sender_name'] != 'Not provided']
             dflist.append(df)
         
-        print("---------",dflist)
+        # print("---------",dflist)
 
         dfall = pd.concat(dflist, ignore_index=True)
         dfall['channel'] = path_channel.split('/')[-1].split('.')[0]        
         dfall = dfall.reset_index(drop=True)
         
+        print(dfall.columns)
+        
+        
         return dfall
+    
+    
     def convert_2_timestamp(self,column, data):
         """convert from unix time to readable timestamp
             args: column: columns that needs to be converted to timestamp
@@ -137,7 +157,8 @@ class SlackDataLoader:
     def get_tagged_users(self,df):
         """get all @ in the messages"""
 
-        return df['msg_content'].map(lambda x: re.findall(r'@U\w+', x))
+        # return df['msg_content'].map(lambda x: re.findall(r'@U\w+', x))
+        return df['msg_content'].apply(lambda x: re.findall(r'<@(.*?)>', x) if pd.notna(x) else [])
 
 
     
@@ -179,3 +200,94 @@ class SlackDataLoader:
         return userNamesById, userIdsByName        
 
 
+def main(data_path):
+    print("in main")
+    data_path = "C:/Users/hp/Documents/projects/10Academy/10AcademyWeekOneChallenge/data/anonymized_new/anonymized"
+    loader = SlackDataLoader(data_path)
+    df = loader.slack_parser()
+    columns = ['msg_type', 'msg_content', 'sender_name', 'msg_sent_time', 'msg_dist_type',
+                       'time_thread_start', 'reply_count', 'reply_users_count', 'reply_users', 'tm_thread_end',
+                       'reactions_count', 'reactions_users']
+    
+    # print("#################Top and Bottom 10 Users:############################")
+    # reply count
+    top_10_reply_users = df.groupby('sender_name')['reply_count'].sum().nlargest(10)
+    bottom_10_reply_users = df.groupby('sender_name')['reply_count'].sum().nsmallest(10)
+    print("----------top_10_reply_users--------")
+    print(top_10_reply_users)
+    print("----------bottom_10_reply_users--------")
+    print(bottom_10_reply_users)
+    # mention count
+     
+    # Extract mentioned users using regular expression
+    # df['mentioned_users'] = loader.get_tagged_users(df)
+    df['mentioned_users'] = df['msg_content'].apply(lambda x: re.findall(r'<@(.*?)>', x) if pd.notna(x) else [])
+    # Count mentions for each user
+    df['mention_count'] = df['mentioned_users'].apply(len)
+ 
+    top_10_mention_users = df.groupby('sender_name')['mention_count'].sum().nlargest(10)
+    bottom_10_mention_users = df.groupby('sender_name')['mention_count'].sum().nsmallest(10)
+    print("----------top_10_mention_users--------")
+    print(top_10_mention_users)
+    print("----------bottom_10_mention_users--------")
+    print(bottom_10_mention_users)
+    
+    
+    # message count
+    top_10_message_users = df['sender_name'].value_counts().nlargest(10)
+    bottom_10_message_users = df['sender_name'].value_counts().nsmallest(10)
+    print("----------top_10_message_users--------")
+    print(top_10_message_users)
+    print("----------bottom_10_message_users--------")
+    print(bottom_10_message_users)
+    # reaction count
+    # Exploding the 'reactions_users' column to have one row per user
+    df_expanded = df.explode('reactions_users')
+
+    # Counting the occurrences of each user
+    user_reaction_counts = df_expanded['reactions_users'].value_counts()
+    top_10_reaction_users = user_reaction_counts.nlargest(10)
+    bottom_10_reaction_users = user_reaction_counts.nsmallest(10)
+    print("----------top_10_reaction_users--------")
+    print(top_10_reaction_users)
+    print("----------bottom_10_reaction_users--------")
+    print(bottom_10_reaction_users)
+    
+    print("#################Top 10 Messages:############################")
+    # reply count
+    top_10_replies = df[df['reply_count'] > 0].nlargest(10, 'reply_count')
+    print("----------top_10_replies--------")
+    print(top_10_replies)
+    # mention count 
+    top_10_mentions = df['reply_users'].str.split(',', expand=True).stack().value_counts().nlargest(10)
+    print("----------top_10_mentions--------")
+    print(top_10_mentions)
+    # reaction count
+    # Explode the 'reactions_users' column to have one row per user
+    df_expanded = df.explode('reactions_users')
+    top_10_reactions = df_expanded.groupby('msg_content').size().nlargest(10)
+    print("----------top_10_reactions--------")
+    print(top_10_reactions)
+    
+    most_active_channel = df['channel'].value_counts().idxmax()
+    print("----------most_active_channel--------")
+    print(most_active_channel)
+
+
+   
+
+
+    # print(df.first)
+
+if __name__ == "__main__":
+ # Using the configuration from config.py
+    data_path = cfg.path
+
+    # # Overriding with command-line argument if provided
+    # parser = argparse.ArgumentParser(description='Export Slack history')
+    # parser.add_argument('--zip', help="Name of a zip file to import")
+    # args = parser.parse_args()
+    
+    # if args.zip:
+    #     data_path = args.zip
+    main(data_path)
